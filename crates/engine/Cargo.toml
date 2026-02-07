@@ -1,0 +1,13 @@
+[package]
+name = "engine"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+core = { path = "../core" }
+state_machine = { path = "../state_machine" }
+structure = { path = "../structure" }
+mm = { path = "../mm" }
+policy = { path = "../policy" }
+bybit = { path = "../bybit" }
+tokio = { version = "1", features = ["full"] }

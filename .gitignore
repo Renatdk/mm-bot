@@ -1,0 +1,13 @@
+/target/
+
+# macOS
+.DS_Store
+
+# IDEs/editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
