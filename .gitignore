@@ -1,4 +1,5 @@
 /target/
+**/target/
 
 # macOS
 .DS_Store
@@ -8,6 +9,14 @@
 .idea/
 *.swp
 *.swo
+.zed/
 
 # Logs
 *.log
+
+# Local env/config
+.env
+.env.*
+
+# Backtest/cache artifacts
+data/backtest*.csv

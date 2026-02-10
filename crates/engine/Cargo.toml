@@ -11,3 +11,8 @@ mm = { path = "../mm" }
 policy = { path = "../policy" }
 bybit = { path = "../bybit" }
 tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+chrono = "0.4"
+csv = "1"
+serde = { version = "1", features = ["derive"] }

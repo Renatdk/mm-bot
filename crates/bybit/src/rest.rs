@@ -1,5 +1,5 @@
-use serde::Deserialize;
 use core::types::{Price, Qty, TimestampMs};
+use serde::Deserialize;
 use structure::candle::Candle;
 
 #[derive(Clone)]
@@ -19,14 +19,15 @@ impl BybitRest {
     pub async fn get_klines_spot(
         &self,
         symbol: &str,
-        interval: &str,          // "1","3","5","15","60","D"...
+        interval: &str, // "1","3","5","15","60","D"...
         start_ms: i64,
         end_ms: i64,
-        limit: u16,              // 1..=1000
+        limit: u16, // 1..=1000
     ) -> anyhow::Result<Vec<Candle>> {
         let url = format!("{}/v5/market/kline", self.base);
 
-        let resp: KlineResp = self.client
+        let resp: KlineResp = self
+            .client
             .get(url)
             .query(&[
                 ("category", "spot"),
@@ -36,9 +37,11 @@ impl BybitRest {
                 ("end", &end_ms.to_string()),
                 ("limit", &limit.to_string()),
             ])
-            .send().await?
+            .send()
+            .await?
             .error_for_status()?
-            .json().await?;
+            .json()
+            .await?;
 
         let mut out = Vec::new();
         let list = resp.result.list;
@@ -69,9 +72,11 @@ impl BybitRest {
 #[derive(Debug, Deserialize)]
 struct KlineResp {
     #[allow(dead_code)]
-    retCode: i64,
+    #[serde(rename = "retCode")]
+    ret_code: i64,
     #[allow(dead_code)]
-    retMsg: String,
+    #[serde(rename = "retMsg")]
+    ret_msg: String,
     result: KlineResult,
 }
 
@@ -79,7 +84,6 @@ struct KlineResp {
 struct KlineResult {
     list: Vec<Vec<String>>,
 }
-
 
 pub async fn download_range(
     api: &BybitRest,
@@ -95,10 +99,16 @@ pub async fn download_range(
     let limit = 1000u16;
 
     loop {
-        if cursor_end <= start_ms { break; }
+        if cursor_end <= start_ms {
+            break;
+        }
 
-        let page = api.get_klines_spot(symbol, interval, start_ms, cursor_end, limit).await?;
-        if page.is_empty() { break; }
+        let page = api
+            .get_klines_spot(symbol, interval, start_ms, cursor_end, limit)
+            .await?;
+        if page.is_empty() {
+            break;
+        }
 
         // page уже в возрастающем порядке (мы rev сделали)
         let first_ts = page.first().unwrap().ts.0;

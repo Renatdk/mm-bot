@@ -42,14 +42,21 @@ impl BosTracker {
         atr: Price,
         params: BosParams,
     ) {
+        let epsilon = atr.0 * params.epsilon_frac;
+
         match self.state {
             BosState::None => {
                 if let Some(high) = structure.last_high {
-                    if candle.close.0 > high.0 {
+                    if candle.close.0 > high.0 + epsilon {
                         self.state = BosState::Potential;
                         self.level = Some(high);
                         self.started_at = Some(candle.ts);
-                        self.confirmed_candles = 0;
+                        // считаем пробойную свечу как 1 подтверждение
+                        self.confirmed_candles = 1;
+
+                        if self.confirmed_candles >= params.confirm_candles {
+                            self.state = BosState::Confirmed;
+                        }
                     }
                 }
             }
@@ -57,12 +64,12 @@ impl BosTracker {
             BosState::Potential => {
                 let level = self.level.expect("level must exist");
 
-                if candle.close.0 < level.0 {
-                    self.state = BosState::Failed;
+                // пробой отменился -> сразу возвращаемся в поиск нового BOS
+                if candle.close.0 <= level.0 {
+                    self.reset();
                     return;
                 }
 
-                let epsilon = atr.0 * params.epsilon_frac;
                 if candle.close.0 > level.0 + epsilon {
                     self.confirmed_candles += 1;
                 }
@@ -72,9 +79,19 @@ impl BosTracker {
                 }
             }
 
-            BosState::Confirmed => {}
+            BosState::Confirmed => {
+                // опционально: если структура сломалась вниз, начинаем поиск заново
+                if let Some(level) = self.level {
+                    if candle.close.0 <= level.0 {
+                        self.reset();
+                    }
+                }
+            }
 
-            BosState::Failed => {}
+            BosState::Failed => {
+                // safety net: не залипаем
+                self.reset();
+            }
         }
     }
 

@@ -1,26 +1,26 @@
 mod event;
-mod tick;
-mod sink;
 mod feed;
+mod sink;
+mod tick;
 
 use tokio::sync::mpsc;
 
-use bybit::ws::{run_ws, MarketEvent};
+use bybit::ws::{MarketEvent, run_ws};
 
-use core::types::{Money, Qty, Ratio, Bps};
+use core::types::{Bps, Money, Qty, Ratio};
 
 use state_machine::state::BotState;
 
-use mm::grid::{Inventory, GridParams};
+use mm::grid::{GridParams, Inventory};
 
 use policy::mm_policy::MmPolicyParams;
 
 use structure::bos::BosParams;
 use structure::pullback::PullbackParams;
-use structure::structure::{detect_structure, StructureParams};
+use structure::structure::{StructureParams, detect_structure};
 
-use tick::{EngineCtx, TickInput, tick};
 use feed::CandleFeed;
+use tick::{EngineCtx, TickInput, tick};
 
 #[tokio::main]
 async fn main() {
@@ -99,17 +99,20 @@ async fn main() {
 
                 println!(
                     "HTF close={} last_high={:?} last_low={:?} bos={:?} pullback={}",
-                    mid.0, ms.last_high.map(|p| p.0), ms.last_low.map(|p| p.0),
-                    ctx.bos.state, ctx.pullback.triggered
+                    mid.0,
+                    ms.last_high.map(|p| p.0),
+                    ms.last_low.map(|p| p.0),
+                    ctx.bos.state,
+                    ctx.pullback.triggered
                 );
-
 
                 // обновить BOS
                 let last = feed.candles.last().unwrap();
                 ctx.bos.on_candle_close(last, &ms, atr, ctx.bos_params);
 
                 // обновить Pullback
-                ctx.pullback.on_candle_close(last, &ctx.bos, atr, ctx.pullback_params);
+                ctx.pullback
+                    .on_candle_close(last, &ctx.bos, atr, ctx.pullback_params);
 
                 // тик engine
                 let input = TickInput {

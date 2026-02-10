@@ -79,6 +79,13 @@ pub fn build_grid(
         return None;
     }
 
+    // Spot long-only invariants:
+    // - no negative holdings
+    // - no synthetic leverage by overspending quote
+    if inv.base.0 < 0.0 || inv.quote.0 < 0.0 {
+        return None;
+    }
+
     let r = base_ratio(inv, mid)?.0;
 
     // Если вышли за hard band — сетку строить нельзя (пусть policy/engine выведет)
@@ -96,6 +103,8 @@ pub fn build_grid(
     let mult = 1.0 + (params.max_size_mult - 1.0) * (dist / 0.5).min(1.0);
 
     let mut out: Vec<DesiredOrder> = Vec::with_capacity(params.levels * 2);
+    let mut remaining_base = inv.base.0;
+    let mut remaining_quote = inv.quote.0;
 
     for level in 1..=params.levels {
         let step_bps = Bps(params.step.0 * level as f64);
@@ -119,11 +128,21 @@ pub fn build_grid(
             (1.0, 1.0)
         };
 
-        let buy_qty = Qty(base_qty_buy.0 * buy_mult);
-        let sell_qty = Qty(base_qty_sell.0 * sell_mult);
+        let desired_buy_qty = base_qty_buy.0 * buy_mult;
+        let desired_sell_qty = base_qty_sell.0 * sell_mult;
+
+        // Reserve quote/base so desired orders are executable in spot long-only mode.
+        let max_buy_qty_by_quote = if buy_price.0 > 0.0 {
+            remaining_quote / buy_price.0
+        } else {
+            0.0
+        };
+        let buy_qty = Qty(desired_buy_qty.min(max_buy_qty_by_quote).max(0.0));
+        let sell_qty = Qty(desired_sell_qty.min(remaining_base).max(0.0));
 
         // фильтр минимального количества (биржевые лимиты)
         if buy_qty.0 >= params.min_base_qty.0 {
+            remaining_quote -= buy_qty.0 * buy_price.0;
             out.push(DesiredOrder {
                 side: Side::Buy,
                 price: buy_price,
@@ -132,6 +151,7 @@ pub fn build_grid(
         }
 
         if sell_qty.0 >= params.min_base_qty.0 {
+            remaining_base -= sell_qty.0;
             out.push(DesiredOrder {
                 side: Side::Sell,
                 price: sell_price,
@@ -183,5 +203,43 @@ mod tests {
         let anchor = Price(1000.0);
         let orders = build_grid(anchor, mid, inv, params());
         assert!(orders.is_none());
+    }
+
+    #[test]
+    fn caps_total_sell_qty_to_available_base() {
+        let inv = Inventory {
+            base: Qty(0.02),
+            quote: Money(20.0),
+        };
+        let mid = Price(1000.0);
+        let anchor = Price(1000.0);
+
+        let orders = build_grid(anchor, mid, inv, params()).unwrap();
+        let total_sell_qty: f64 = orders
+            .iter()
+            .filter(|o| o.side == Side::Sell)
+            .map(|o| o.qty.0)
+            .sum();
+
+        assert!(total_sell_qty <= inv.base.0 + 1e-9);
+    }
+
+    #[test]
+    fn caps_total_buy_notional_to_available_quote() {
+        let inv = Inventory {
+            base: Qty(0.02),
+            quote: Money(20.0),
+        };
+        let mid = Price(1000.0);
+        let anchor = Price(1000.0);
+
+        let orders = build_grid(anchor, mid, inv, params()).unwrap();
+        let total_buy_notional: f64 = orders
+            .iter()
+            .filter(|o| o.side == Side::Buy)
+            .map(|o| o.qty.0 * o.price.0)
+            .sum();
+
+        assert!(total_buy_notional <= inv.quote.0 + 1e-9);
     }
 }

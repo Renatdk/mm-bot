@@ -1,7 +1,7 @@
-use tokio::sync::mpsc::Sender;
 use futures_util::{SinkExt, StreamExt};
-use tokio_tungstenite::tungstenite::Message;
 use serde::Deserialize;
+use tokio::sync::mpsc::Sender;
+use tokio_tungstenite::tungstenite::Message;
 
 use core::types::{Price, Qty, TimestampMs};
 use structure::candle::Candle;
@@ -53,7 +53,6 @@ fn subscribe_messages() -> Vec<Message> {
         ),
     ]
 }
-
 
 pub async fn run_ws(tx: Sender<MarketEvent>) {
     // Spot public WS endpoint
