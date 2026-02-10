@@ -173,6 +173,7 @@ async fn main() -> Result<()> {
     let mut quote = Money(args.initial_quote);
     let mut base = Qty(0.0);
     let mut entry_price: Option<Price> = None;
+    let mut entry_cost_quote: Option<f64> = None;
 
     let exec = ExecutionModel {
         fee_bps: args.fee_bps,
@@ -181,6 +182,11 @@ async fn main() -> Result<()> {
     };
     let mut trades = 0usize;
     let mut stop_exits = 0usize;
+    let mut closed_trades = 0usize;
+    let mut winning_trades = 0usize;
+    let mut losing_trades = 0usize;
+    let mut gross_profit = 0.0_f64;
+    let mut gross_loss = 0.0_f64;
 
     let mut max_equity = quote.0;
     let mut max_drawdown = 0.0_f64;
@@ -218,6 +224,7 @@ async fn main() -> Result<()> {
                         quote = Money((quote.0 - cost).max(0.0));
                         base = Qty(base.0 + qty.0);
                         entry_price = Some(c.close);
+                        entry_cost_quote = Some(cost);
                         trades += 1;
                     }
                 }
@@ -229,9 +236,21 @@ async fn main() -> Result<()> {
             TrendAction::ExitLong => {
                 if base.0 > 0.0 {
                     let proceeds = exec.sell_proceeds(base, c.close);
+                    if let Some(cost) = entry_cost_quote {
+                        let trade_pnl = proceeds - cost;
+                        closed_trades += 1;
+                        if trade_pnl > 0.0 {
+                            winning_trades += 1;
+                            gross_profit += trade_pnl;
+                        } else if trade_pnl < 0.0 {
+                            losing_trades += 1;
+                            gross_loss += -trade_pnl;
+                        }
+                    }
                     quote = Money(quote.0 + proceeds);
                     base = Qty(0.0);
                     entry_price = None;
+                    entry_cost_quote = None;
                     trades += 1;
                 }
 
@@ -267,6 +286,21 @@ async fn main() -> Result<()> {
     } else {
         0.0
     };
+    let win_rate_pct = if closed_trades > 0 {
+        100.0 * (winning_trades as f64) / (closed_trades as f64)
+    } else {
+        0.0
+    };
+    let avg_win = if winning_trades > 0 {
+        gross_profit / (winning_trades as f64)
+    } else {
+        0.0
+    };
+    let avg_loss = if losing_trades > 0 {
+        gross_loss / (losing_trades as f64)
+    } else {
+        0.0
+    };
 
     println!("Trend backtest finished");
     println!(
@@ -279,6 +313,21 @@ async fn main() -> Result<()> {
         quote.0, base.0, final_equity
     );
     println!("pnl={:.4} roi={:.2}% max_drawdown={:.2}%", pnl, roi_pct, max_drawdown * 100.0);
+    if gross_loss > 0.0 {
+        println!(
+            "closed_trades={} win_rate={:.2}% avg_win={:.4} avg_loss={:.4} profit_factor={:.4}",
+            closed_trades,
+            win_rate_pct,
+            avg_win,
+            avg_loss,
+            gross_profit / gross_loss
+        );
+    } else {
+        println!(
+            "closed_trades={} win_rate={:.2}% avg_win={:.4} avg_loss={:.4} profit_factor=INF",
+            closed_trades, win_rate_pct, avg_win, avg_loss
+        );
+    }
 
     Ok(())
 }
