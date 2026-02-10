@@ -301,6 +301,7 @@ dependencies = [
  "clap",
  "core",
  "csv",
+ "execution",
  "mm",
  "policy",
  "serde",
@@ -322,6 +323,9 @@ dependencies = [
 [[package]]
 name = "execution"
 version = "0.1.0"
+dependencies = [
+ "core",
+]
 
 [[package]]
 name = "find-msvc-tools"

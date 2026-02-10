@@ -5,6 +5,7 @@ use clap::Parser;
 use bybit::rest::{BybitRest, download_range};
 use core::types::{Money, Price, Qty};
 use engine::feed::CandleFeed;
+use execution::sim::ExecutionModel;
 use policy::trend_policy::{
     TrendAction, TrendDecisionReason, TrendMode, TrendPolicyInput, TrendPolicyParams,
     trend_policy_decision,
@@ -36,6 +37,10 @@ struct Args {
     atr_stop_mult: f64,
     #[arg(long, default_value_t = 10.0)]
     fee_bps: f64,
+    #[arg(long, default_value_t = 8.0)]
+    spread_bps: f64,
+    #[arg(long, default_value_t = 2.0)]
+    slippage_bps: f64,
     #[arg(long, default_value_t = 1000.0)]
     initial_quote: f64,
 }
@@ -169,7 +174,11 @@ async fn main() -> Result<()> {
     let mut base = Qty(0.0);
     let mut entry_price: Option<Price> = None;
 
-    let fee_ratio = args.fee_bps / 10_000.0;
+    let exec = ExecutionModel {
+        fee_bps: args.fee_bps,
+        spread_bps: args.spread_bps,
+        slippage_bps: args.slippage_bps,
+    };
     let mut trades = 0usize;
     let mut stop_exits = 0usize;
 
@@ -203,9 +212,9 @@ async fn main() -> Result<()> {
         match decision.action {
             TrendAction::EnterLong => {
                 if quote.0 > 0.0 {
-                    let qty = Qty(quote.0 / (c.close.0 * (1.0 + fee_ratio)));
+                    let qty = exec.buy_qty_for_quote(quote.0, c.close);
                     if qty.0 > 0.0 {
-                        let cost = qty.0 * c.close.0 * (1.0 + fee_ratio);
+                        let cost = exec.buy_cost(qty, c.close);
                         quote = Money((quote.0 - cost).max(0.0));
                         base = Qty(base.0 + qty.0);
                         entry_price = Some(c.close);
@@ -219,7 +228,7 @@ async fn main() -> Result<()> {
             }
             TrendAction::ExitLong => {
                 if base.0 > 0.0 {
-                    let proceeds = base.0 * c.close.0 * (1.0 - fee_ratio);
+                    let proceeds = exec.sell_proceeds(base, c.close);
                     quote = Money(quote.0 + proceeds);
                     base = Qty(0.0);
                     entry_price = None;
@@ -260,6 +269,10 @@ async fn main() -> Result<()> {
     };
 
     println!("Trend backtest finished");
+    println!(
+        "cost_model: fee_bps={:.2} spread_bps={:.2} slippage_bps={:.2}",
+        args.fee_bps, args.spread_bps, args.slippage_bps
+    );
     println!("state={:?} trades={} stop_exits={}", trend_state, trades, stop_exits);
     println!(
         "final_quote={:.4} final_base={:.8} final_equity={:.4}",

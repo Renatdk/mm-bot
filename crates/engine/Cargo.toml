@@ -10,6 +10,7 @@ structure = { path = "../structure" }
 mm = { path = "../mm" }
 policy = { path = "../policy" }
 bybit = { path = "../bybit" }
+execution = { path = "../execution" }
 tokio = { version = "1", features = ["full"] }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
