@@ -118,12 +118,12 @@ pub fn build_grid(
         let base_qty_sell = Qty(params.base_quote_per_order.0 / sell_price.0);
 
         // адаптация размеров:
-        // - если base слишком много (r > 0.5): увеличиваем BUY и уменьшаем SELL
-        // - если base мало (r < 0.5): увеличиваем SELL и уменьшаем BUY
+        // - если base слишком много (r > 0.5): уменьшаем BUY и увеличиваем SELL
+        // - если base мало (r < 0.5): увеличиваем BUY и уменьшаем SELL
         let (buy_mult, sell_mult) = if r > target {
-            (mult, 1.0 / mult)
-        } else if r < target {
             (1.0 / mult, mult)
+        } else if r < target {
+            (mult, 1.0 / mult)
         } else {
             (1.0, 1.0)
         };
@@ -241,5 +241,53 @@ mod tests {
             .sum();
 
         assert!(total_buy_notional <= inv.quote.0 + 1e-9);
+    }
+
+    #[test]
+    fn over_target_base_biases_toward_sells() {
+        let inv = Inventory {
+            base: Qty(6.0),
+            quote: Money(4000.0),
+        }; // r = 0.6 at mid=1000
+        let mid = Price(1000.0);
+        let anchor = Price(1000.0);
+
+        let orders = build_grid(anchor, mid, inv, params()).unwrap();
+        let total_buy_qty: f64 = orders
+            .iter()
+            .filter(|o| o.side == Side::Buy)
+            .map(|o| o.qty.0)
+            .sum();
+        let total_sell_qty: f64 = orders
+            .iter()
+            .filter(|o| o.side == Side::Sell)
+            .map(|o| o.qty.0)
+            .sum();
+
+        assert!(total_sell_qty > total_buy_qty);
+    }
+
+    #[test]
+    fn under_target_base_biases_toward_buys() {
+        let inv = Inventory {
+            base: Qty(4.0),
+            quote: Money(6000.0),
+        }; // r = 0.4 at mid=1000
+        let mid = Price(1000.0);
+        let anchor = Price(1000.0);
+
+        let orders = build_grid(anchor, mid, inv, params()).unwrap();
+        let total_buy_qty: f64 = orders
+            .iter()
+            .filter(|o| o.side == Side::Buy)
+            .map(|o| o.qty.0)
+            .sum();
+        let total_sell_qty: f64 = orders
+            .iter()
+            .filter(|o| o.side == Side::Sell)
+            .map(|o| o.qty.0)
+            .sum();
+
+        assert!(total_buy_qty > total_sell_qty);
     }
 }
