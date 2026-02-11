@@ -46,6 +46,45 @@ cargo run -p engine --bin backtest -- \  --symbol ETHUSDT \  --interval 5 \  --s
 Функции:
 - автозагрузка Bybit- CSV-кэш- детерминированный прогон- события policy / transitions
 ---
+Orchestration Foundation (API + Worker)
+Добавлены два сервиса для управления backtest/sweep заданиями:
+- `api` (Axum + SQLx + PostgreSQL + Redis queue)
+- `worker` (очередь Redis, выполнение `cargo run -p engine --bin ...`)
+
+Требуемые переменные окружения:
+- `DATABASE_URL` (PostgreSQL)
+- `REDIS_URL` (Redis)
+- `BIND_ADDR` (опционально, по умолчанию `0.0.0.0:8080`) для API
+- `WORKSPACE_ROOT` (опционально, путь к репозиторию) для worker
+
+Запуск API:
+`cargo run -p api`
+
+Запуск Worker:
+`cargo run -p worker`
+
+Базовые endpoints API:
+- `GET /health`
+- `POST /runs`
+- `GET /runs`
+- `GET /runs/:id`
+- `GET /runs/:id/events`
+
+Пример `POST /runs`:
+```json
+{
+  "name": "MM MTF Jan-Feb",
+  "kind": "backtest_mm_mtf",
+  "cli_args": [
+    "--symbol", "ETHUSDT",
+    "--htf-interval", "5",
+    "--ltf-interval", "1",
+    "--start", "2026-01-01",
+    "--end", "2026-02-10"
+  ]
+}
+```
+---
 Ограничения текущей версии
 Backtest ещё не учитывает:
 - комиссии- спред- очередь в стакане- частичные исполнения- latency- ликвидность

@@ -1,0 +1,214 @@
+use std::{env, process::Stdio};
+
+use anyhow::{Context, Result};
+use orchestrator_core::models::{RUN_QUEUE_KEY, RunKind};
+use sqlx::PgPool;
+use tokio::{
+    io::{AsyncBufReadExt, BufReader},
+    process::Command,
+};
+use tracing::{error, info};
+use uuid::Uuid;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "worker=info".into()),
+        )
+        .init();
+
+    let database_url = env::var("DATABASE_URL").context("DATABASE_URL is required")?;
+    let redis_url = env::var("REDIS_URL").context("REDIS_URL is required")?;
+    let workspace_root = env::var("WORKSPACE_ROOT")
+        .unwrap_or_else(|_| "/Users/renatdarybayev/Projects/rust/mm-bot".to_string());
+
+    let pg = PgPool::connect(&database_url).await?;
+    sqlx::migrate!("../../migrations").run(&pg).await?;
+
+    let redis = redis::Client::open(redis_url)?;
+    let mut conn = redis
+        .get_multiplexed_tokio_connection()
+        .await
+        .context("redis connection failed")?;
+
+    info!("worker started");
+
+    loop {
+        let resp: (String, String) = redis::cmd("BRPOP")
+            .arg(RUN_QUEUE_KEY)
+            .arg(0)
+            .query_async(&mut conn)
+            .await
+            .context("queue pop failed")?;
+
+        let run_id: Uuid = match resp.1.parse() {
+            Ok(v) => v,
+            Err(e) => {
+                error!("invalid run id in queue '{}': {}", resp.1, e);
+                continue;
+            }
+        };
+
+        if let Err(e) = process_run(&pg, run_id, &workspace_root).await {
+            error!("run {} failed: {}", run_id, e);
+            let _ = mark_failed(&pg, run_id, None, &format!("{}", e)).await;
+        }
+    }
+}
+
+async fn process_run(pg: &PgPool, run_id: Uuid, workspace_root: &str) -> Result<()> {
+    let row = sqlx::query_as::<_, DbRunAndParams>(
+        r#"
+        SELECT r.id, r.kind, p.cli_args
+        FROM runs r
+        JOIN run_params p ON p.run_id = r.id
+        WHERE r.id = $1
+        "#,
+    )
+    .bind(run_id)
+    .fetch_optional(pg)
+    .await?;
+
+    let Some(row) = row else {
+        anyhow::bail!("run {} not found", run_id);
+    };
+
+    let run_kind = parse_run_kind(&row.kind)?;
+    let cli_args: Vec<String> = serde_json::from_value(row.cli_args)
+        .context("failed to decode cli_args for run")?;
+
+    sqlx::query(
+        r#"
+        UPDATE runs
+        SET status = 'running', started_at = NOW(), error = NULL, exit_code = NULL
+        WHERE id = $1
+        "#,
+    )
+    .bind(run_id)
+    .execute(pg)
+    .await?;
+
+    append_event(pg, run_id, "info", "started worker execution").await?;
+
+    let mut cmd = Command::new("cargo");
+    cmd.arg("run")
+        .arg("-p")
+        .arg("engine")
+        .arg("--bin")
+        .arg(run_kind.engine_bin())
+        .arg("--")
+        .args(&cli_args)
+        .current_dir(workspace_root)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = cmd.spawn().context("failed to spawn backtest process")?;
+    let stdout = child.stdout.take().context("stdout unavailable")?;
+    let stderr = child.stderr.take().context("stderr unavailable")?;
+
+    let mut out_reader = BufReader::new(stdout).lines();
+    let mut err_reader = BufReader::new(stderr).lines();
+
+    loop {
+        tokio::select! {
+            out = out_reader.next_line() => {
+                match out {
+                    Ok(Some(line)) => {
+                        append_event(pg, run_id, "info", &line).await?;
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        append_event(pg, run_id, "error", &format!("stdout read error: {}", e)).await?;
+                    }
+                }
+            }
+            err = err_reader.next_line() => {
+                match err {
+                    Ok(Some(line)) => {
+                        append_event(pg, run_id, "error", &line).await?;
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        append_event(pg, run_id, "error", &format!("stderr read error: {}", e)).await?;
+                    }
+                }
+            }
+            status = child.wait() => {
+                let status = status.context("failed to wait for child process")?;
+                let code = status.code().unwrap_or(-1);
+                if status.success() {
+                    sqlx::query(
+                        r#"
+                        UPDATE runs
+                        SET status = 'completed', ended_at = NOW(), exit_code = $2
+                        WHERE id = $1
+                        "#,
+                    )
+                    .bind(run_id)
+                    .bind(code)
+                    .execute(pg)
+                    .await?;
+                    append_event(pg, run_id, "info", "run completed").await?;
+                } else {
+                    mark_failed(pg, run_id, Some(code), "engine process exited with failure").await?;
+                }
+                break;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn append_event(pg: &PgPool, run_id: Uuid, level: &str, message: &str) -> Result<()> {
+    sqlx::query(
+        r#"
+        INSERT INTO run_events (run_id, ts, level, message)
+        VALUES ($1, NOW(), $2, $3)
+        "#,
+    )
+    .bind(run_id)
+    .bind(level)
+    .bind(message)
+    .execute(pg)
+    .await?;
+    Ok(())
+}
+
+async fn mark_failed(pg: &PgPool, run_id: Uuid, code: Option<i32>, error: &str) -> Result<()> {
+    sqlx::query(
+        r#"
+        UPDATE runs
+        SET status = 'failed', ended_at = NOW(), exit_code = $2, error = $3
+        WHERE id = $1
+        "#,
+    )
+    .bind(run_id)
+    .bind(code.unwrap_or(-1))
+    .bind(error)
+    .execute(pg)
+    .await?;
+    append_event(pg, run_id, "error", error).await?;
+    Ok(())
+}
+
+#[derive(sqlx::FromRow)]
+struct DbRunAndParams {
+    #[allow(dead_code)]
+    id: Uuid,
+    kind: String,
+    cli_args: serde_json::Value,
+}
+
+fn parse_run_kind(s: &str) -> Result<RunKind> {
+    match s {
+        "backtest_trend" => Ok(RunKind::BacktestTrend),
+        "backtest_trend_sweep" => Ok(RunKind::BacktestTrendSweep),
+        "backtest_mm" => Ok(RunKind::BacktestMm),
+        "backtest_mm_mtf" => Ok(RunKind::BacktestMmMtf),
+        "backtest_mm_mtf_sweep" => Ok(RunKind::BacktestMmMtfSweep),
+        _ => anyhow::bail!("unknown run kind: {}", s),
+    }
+}
