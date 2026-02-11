@@ -139,6 +139,18 @@ async fn process_run(pg: &PgPool, run_id: Uuid, workspace_root: &str, engine_bin
             status = child.wait() => {
                 let status = status.context("failed to wait for child process")?;
                 let code = status.code().unwrap_or(-1);
+
+                // Process may exit before we consume buffered stdout/stderr lines.
+                // Drain remaining output so metrics/artifacts are not lost.
+                while let Ok(Some(line)) = out_reader.next_line().await {
+                    collect_results_from_line(&line, &mut metrics, &mut artifacts);
+                    append_event(pg, run_id, "info", &line).await?;
+                }
+                while let Ok(Some(line)) = err_reader.next_line().await {
+                    collect_results_from_line(&line, &mut metrics, &mut artifacts);
+                    append_event(pg, run_id, "error", &line).await?;
+                }
+
                 if status.success() {
                     persist_results(pg, run_id, &metrics, &artifacts).await?;
                     sqlx::query(
