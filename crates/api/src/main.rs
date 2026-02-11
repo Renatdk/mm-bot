@@ -46,6 +46,7 @@ async fn main() -> Result<()> {
     let app = Router::new()
         .route("/health", get(health))
         .route("/runs", post(create_run).get(list_runs))
+        .route("/runs/presets/mm_mtf_sweep", post(create_run_preset_mm_mtf_sweep))
         .route("/runs/{id}", get(get_run))
         .route("/runs/{id}/events", get(list_run_events))
         .route("/runs/{id}/metrics", get(get_run_metrics))
@@ -83,6 +84,113 @@ async fn health() -> impl IntoResponse {
 async fn create_run(
     State(state): State<AppState>,
     Json(req): Json<CreateRunRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    enqueue_run(&state, req).await
+}
+
+#[derive(Debug, Deserialize)]
+struct MmMtfSweepPresetRequest {
+    symbol: String,
+    start: String,
+    end: String,
+    htf_interval: Option<String>,
+    ltf_interval: Option<String>,
+    maker_fee_bps_list: Option<String>,
+    top_n: Option<usize>,
+    summary_out: Option<String>,
+}
+
+async fn create_run_preset_mm_mtf_sweep(
+    State(state): State<AppState>,
+    Json(req): Json<MmMtfSweepPresetRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    if req.symbol.trim().is_empty() || req.start.trim().is_empty() || req.end.trim().is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "symbol, start, end are required"})),
+        ));
+    }
+
+    let htf_interval = req.htf_interval.unwrap_or_else(|| "5".to_string());
+    let ltf_interval = req.ltf_interval.unwrap_or_else(|| "1".to_string());
+    let maker_fee_bps_list = req.maker_fee_bps_list.unwrap_or_else(|| "10".to_string());
+    let top_n = req.top_n.unwrap_or(30).clamp(1, 200);
+    let summary_out = req.summary_out.unwrap_or_else(|| {
+        format!(
+            "data/mm_mtf_sweep_{}_{}_{}.csv",
+            req.symbol,
+            req.start.replace('-', ""),
+            req.end.replace('-', "")
+        )
+    });
+
+    let run = CreateRunRequest {
+        name: format!("mm_mtf_sweep {} {}..{}", req.symbol, req.start, req.end),
+        kind: RunKind::BacktestMmMtfSweep,
+        cli_args: vec![
+            "--symbol".into(),
+            req.symbol,
+            "--htf-interval".into(),
+            htf_interval,
+            "--ltf-interval".into(),
+            ltf_interval,
+            "--start".into(),
+            req.start,
+            "--end".into(),
+            req.end,
+            "--htf-cache".into(),
+            "data/mm_mtf_htf_5m.csv".into(),
+            "--ltf-cache".into(),
+            "data/mm_mtf_ltf_1m.csv".into(),
+            "--levels-list".into(),
+            "3,5,7".into(),
+            "--step-bps-list".into(),
+            "6,8,10,12".into(),
+            "--base-quote-per-order-list".into(),
+            "20,30,40".into(),
+            "--max-size-mult-list".into(),
+            "1.5,2.0,2.5".into(),
+            "--soft-min-list".into(),
+            "0.35,0.40".into(),
+            "--soft-max-list".into(),
+            "0.55,0.60".into(),
+            "--hard-min-list".into(),
+            "0.30,0.35".into(),
+            "--hard-max-list".into(),
+            "0.65,0.70".into(),
+            "--maker-fee-bps-list".into(),
+            maker_fee_bps_list,
+            "--defensive-step-mult-list".into(),
+            "1.2,1.5,1.8".into(),
+            "--defensive-size-mult-list".into(),
+            "0.35,0.5,0.7".into(),
+            "--initial-quote".into(),
+            "1000".into(),
+            "--initial-base".into(),
+            "0".into(),
+            "--bootstrap-rebalance".into(),
+            "--bootstrap-target-ratio".into(),
+            "0.50".into(),
+            "--force-close-at-end".into(),
+            "--force-close-fee-bps".into(),
+            "10".into(),
+            "--force-close-spread-bps".into(),
+            "8".into(),
+            "--force-close-slippage-bps".into(),
+            "2".into(),
+            "--top-n".into(),
+            top_n.to_string(),
+            "--summary-out".into(),
+            summary_out,
+        ],
+    };
+
+    enqueue_run(&state, run).await
+}
+
+async fn enqueue_run(
+    state: &AppState,
+    req: CreateRunRequest,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     if req.name.trim().is_empty() {
         return Err((

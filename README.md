@@ -72,6 +72,7 @@ Orchestration Foundation (API + Worker)
 Базовые endpoints API:
 - `GET /health`
 - `POST /runs`
+- `POST /runs/presets/mm_mtf_sweep`
 - `GET /runs`
 - `GET /runs/:id`
 - `GET /runs/:id/events`
