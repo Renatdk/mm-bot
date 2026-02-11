@@ -84,7 +84,7 @@ async fn health() -> impl IntoResponse {
 async fn create_run(
     State(state): State<AppState>,
     Json(req): Json<CreateRunRequest>,
-) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<(StatusCode, Json<RunRecord>), (StatusCode, Json<serde_json::Value>)> {
     enqueue_run(&state, req).await
 }
 
@@ -103,7 +103,7 @@ struct MmMtfSweepPresetRequest {
 async fn create_run_preset_mm_mtf_sweep(
     State(state): State<AppState>,
     Json(req): Json<MmMtfSweepPresetRequest>,
-) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<(StatusCode, Json<RunRecord>), (StatusCode, Json<serde_json::Value>)> {
     if req.symbol.trim().is_empty() || req.start.trim().is_empty() || req.end.trim().is_empty() {
         return Err((
             StatusCode::BAD_REQUEST,
@@ -191,7 +191,7 @@ async fn create_run_preset_mm_mtf_sweep(
 async fn enqueue_run(
     state: &AppState,
     req: CreateRunRequest,
-) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<(StatusCode, Json<RunRecord>), (StatusCode, Json<serde_json::Value>)> {
     if req.name.trim().is_empty() {
         return Err((
             StatusCode::BAD_REQUEST,
