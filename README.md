@@ -63,6 +63,12 @@ Orchestration Foundation (API + Worker)
 Запуск Worker:
 `cargo run -p worker`
 
+Локальный запуск всей orchestration-связки (api + worker + postgres + redis):
+`docker compose -f docker-compose.orchestrator.yml up`
+
+Деплой на Railway:
+см. `RAILWAY.md`.
+
 Базовые endpoints API:
 - `GET /health`
 - `POST /runs`

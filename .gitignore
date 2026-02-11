@@ -17,6 +17,7 @@
 # Local env/config
 .env
 .env.*
+!.env.example
 
 # Backtest/cache artifacts
 data/backtest*.csv

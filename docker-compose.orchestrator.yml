@@ -1,0 +1,69 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: mmbot
+      POSTGRES_PASSWORD: mmbot
+      POSTGRES_DB: mmbot
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+
+  api:
+    image: rust:1.85
+    restart: unless-stopped
+    working_dir: /workspace
+    volumes:
+      - ./:/workspace
+      - cargo-registry:/usr/local/cargo/registry
+      - cargo-git:/usr/local/cargo/git
+      - target-cache:/workspace/target
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgres://mmbot:mmbot@postgres:5432/mmbot
+      REDIS_URL: redis://redis:6379
+      WORKSPACE_ROOT: /workspace
+      BIND_ADDR: 0.0.0.0:8080
+    command: bash -lc "cargo run -p api"
+    depends_on:
+      - postgres
+      - redis
+    ports:
+      - "8080:8080"
+
+  worker:
+    image: rust:1.85
+    restart: unless-stopped
+    working_dir: /workspace
+    volumes:
+      - ./:/workspace
+      - cargo-registry:/usr/local/cargo/registry
+      - cargo-git:/usr/local/cargo/git
+      - target-cache:/workspace/target
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgres://mmbot:mmbot@postgres:5432/mmbot
+      REDIS_URL: redis://redis:6379
+      WORKSPACE_ROOT: /workspace
+    command: bash -lc "cargo run -p worker"
+    depends_on:
+      - postgres
+      - redis
+
+volumes:
+  pgdata:
+  cargo-registry:
+  cargo-git:
+  target-cache:
