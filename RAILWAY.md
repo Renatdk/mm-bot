@@ -7,11 +7,11 @@
 - Service `postgresql` (Railway DB)
 - Service `redis` (Railway Redis)
 
-## 1) API service
+## 1) API service (Docker)
 
 - Root Directory: repo root
-- Build Command: `cargo build -p api --release`
-- Start Command: `cargo run -p api --release`
+- Builder: `Dockerfile`
+- Dockerfile Path: `Dockerfile.api`
 
 Environment variables:
 
@@ -20,17 +20,18 @@ Environment variables:
 - `BIND_ADDR` = `0.0.0.0:$PORT`
 - `RUST_LOG` = `api=info`
 
-## 2) Worker service
+## 2) Worker service (Docker)
 
 - Root Directory: repo root
-- Build Command: `cargo build -p worker --release`
-- Start Command: `cargo run -p worker --release`
+- Builder: `Dockerfile`
+- Dockerfile Path: `Dockerfile.worker`
 
 Environment variables:
 
 - `DATABASE_URL` = connection string вашей Railway PostgreSQL
 - `REDIS_URL` = connection string вашей Railway Redis
 - `WORKSPACE_ROOT` = `/app`
+- `ENGINE_BIN_DIR` = `/usr/local/bin`
 - `RUST_LOG` = `worker=info`
 
 ## 3) Проверка

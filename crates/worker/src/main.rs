@@ -21,8 +21,8 @@ async fn main() -> Result<()> {
 
     let database_url = env::var("DATABASE_URL").context("DATABASE_URL is required")?;
     let redis_url = env::var("REDIS_URL").context("REDIS_URL is required")?;
-    let workspace_root = env::var("WORKSPACE_ROOT")
-        .unwrap_or_else(|_| "/Users/renatdarybayev/Projects/rust/mm-bot".to_string());
+    let workspace_root = env::var("WORKSPACE_ROOT").unwrap_or_else(|_| "/app".to_string());
+    let engine_bin_dir = env::var("ENGINE_BIN_DIR").unwrap_or_else(|_| "/usr/local/bin".to_string());
 
     let pg = PgPool::connect(&database_url).await?;
     sqlx::migrate!("../../migrations").run(&pg).await?;
@@ -51,14 +51,14 @@ async fn main() -> Result<()> {
             }
         };
 
-        if let Err(e) = process_run(&pg, run_id, &workspace_root).await {
+        if let Err(e) = process_run(&pg, run_id, &workspace_root, &engine_bin_dir).await {
             error!("run {} failed: {}", run_id, e);
             let _ = mark_failed(&pg, run_id, None, &format!("{}", e)).await;
         }
     }
 }
 
-async fn process_run(pg: &PgPool, run_id: Uuid, workspace_root: &str) -> Result<()> {
+async fn process_run(pg: &PgPool, run_id: Uuid, workspace_root: &str, engine_bin_dir: &str) -> Result<()> {
     let row = sqlx::query_as::<_, DbRunAndParams>(
         r#"
         SELECT r.id, r.kind, p.cli_args
@@ -92,19 +92,16 @@ async fn process_run(pg: &PgPool, run_id: Uuid, workspace_root: &str) -> Result<
 
     append_event(pg, run_id, "info", "started worker execution").await?;
 
-    let mut cmd = Command::new("cargo");
-    cmd.arg("run")
-        .arg("-p")
-        .arg("engine")
-        .arg("--bin")
-        .arg(run_kind.engine_bin())
-        .arg("--")
-        .args(&cli_args)
+    let engine_bin_path = format!("{}/{}", engine_bin_dir.trim_end_matches('/'), run_kind.engine_bin());
+    let mut cmd = Command::new(&engine_bin_path);
+    cmd.args(&cli_args)
         .current_dir(workspace_root)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    let mut child = cmd.spawn().context("failed to spawn backtest process")?;
+    let mut child = cmd
+        .spawn()
+        .with_context(|| format!("failed to spawn backtest process: {}", engine_bin_path))?;
     let stdout = child.stdout.take().context("stdout unavailable")?;
     let stderr = child.stderr.take().context("stderr unavailable")?;
 
