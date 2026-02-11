@@ -46,8 +46,8 @@ async fn main() -> Result<()> {
     let app = Router::new()
         .route("/health", get(health))
         .route("/runs", post(create_run).get(list_runs))
-        .route("/runs/:id", get(get_run))
-        .route("/runs/:id/events", get(list_run_events))
+        .route("/runs/{id}", get(get_run))
+        .route("/runs/{id}/events", get(list_run_events))
         .with_state(state);
 
     let addr: SocketAddr = bind_addr.parse().context("invalid BIND_ADDR")?;
