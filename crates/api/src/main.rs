@@ -35,7 +35,7 @@ async fn main() -> Result<()> {
 
     let database_url = env::var("DATABASE_URL").context("DATABASE_URL is required")?;
     let redis_url = env::var("REDIS_URL").context("REDIS_URL is required")?;
-    let bind_addr = env::var("BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".to_string());
+    let bind_addr = resolve_bind_addr()?;
 
     let pg = PgPool::connect(&database_url).await?;
     sqlx::migrate!("../../migrations").run(&pg).await?;
@@ -55,6 +55,23 @@ async fn main() -> Result<()> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+fn resolve_bind_addr() -> Result<String> {
+    let port_env = env::var("PORT").ok();
+    let fallback = format!("0.0.0.0:{}", port_env.unwrap_or_else(|| "8080".to_string()));
+
+    let Some(raw) = env::var("BIND_ADDR").ok() else {
+        return Ok(fallback);
+    };
+
+    let mut bind = raw.trim().to_string();
+    if bind.contains("$PORT") || bind.contains("${PORT}") {
+        let port = env::var("PORT").context("BIND_ADDR references PORT but PORT is missing")?;
+        bind = bind.replace("${PORT}", &port).replace("$PORT", &port);
+    }
+
+    Ok(bind)
 }
 
 async fn health() -> impl IntoResponse {
