@@ -107,12 +107,15 @@ async fn process_run(pg: &PgPool, run_id: Uuid, workspace_root: &str, engine_bin
 
     let mut out_reader = BufReader::new(stdout).lines();
     let mut err_reader = BufReader::new(stderr).lines();
+    let mut metrics = serde_json::Map::<String, serde_json::Value>::new();
+    let mut artifacts: Vec<ArtifactEntry> = Vec::new();
 
     loop {
         tokio::select! {
             out = out_reader.next_line() => {
                 match out {
                     Ok(Some(line)) => {
+                        collect_results_from_line(&line, &mut metrics, &mut artifacts);
                         append_event(pg, run_id, "info", &line).await?;
                     }
                     Ok(None) => {}
@@ -124,6 +127,7 @@ async fn process_run(pg: &PgPool, run_id: Uuid, workspace_root: &str, engine_bin
             err = err_reader.next_line() => {
                 match err {
                     Ok(Some(line)) => {
+                        collect_results_from_line(&line, &mut metrics, &mut artifacts);
                         append_event(pg, run_id, "error", &line).await?;
                     }
                     Ok(None) => {}
@@ -136,6 +140,7 @@ async fn process_run(pg: &PgPool, run_id: Uuid, workspace_root: &str, engine_bin
                 let status = status.context("failed to wait for child process")?;
                 let code = status.code().unwrap_or(-1);
                 if status.success() {
+                    persist_results(pg, run_id, &metrics, &artifacts).await?;
                     sqlx::query(
                         r#"
                         UPDATE runs
@@ -153,6 +158,97 @@ async fn process_run(pg: &PgPool, run_id: Uuid, workspace_root: &str, engine_bin
                 }
                 break;
             }
+        }
+    }
+
+    Ok(())
+}
+
+#[derive(Debug, Clone)]
+struct ArtifactEntry {
+    kind: String,
+    path: String,
+}
+
+fn collect_results_from_line(
+    line: &str,
+    metrics: &mut serde_json::Map<String, serde_json::Value>,
+    artifacts: &mut Vec<ArtifactEntry>,
+) {
+    if let Some(rest) = line.strip_prefix("artifacts:") {
+        for token in rest.split_whitespace() {
+            if let Some((k, v)) = token.split_once('=') {
+                let kind = k.trim().to_string();
+                let path = v.trim().trim_end_matches(',').to_string();
+                if !kind.is_empty() && !path.is_empty() {
+                    artifacts.push(ArtifactEntry { kind, path });
+                }
+            }
+        }
+    }
+
+    for token in line
+        .split(|c: char| c.is_whitespace() || c == ',' || c == ';')
+        .filter(|s| !s.is_empty())
+    {
+        if let Some((k, v_raw)) = token.split_once('=') {
+            let key = k.trim();
+            if key.is_empty() {
+                continue;
+            }
+            let value = v_raw.trim().trim_matches('"').trim_end_matches(',');
+            if value.is_empty() {
+                continue;
+            }
+            if let Ok(num) = value.trim_end_matches('%').parse::<f64>() {
+                metrics.insert(key.to_string(), serde_json::json!(num));
+            } else {
+                metrics.insert(key.to_string(), serde_json::json!(value));
+            }
+        }
+    }
+}
+
+async fn persist_results(
+    pg: &PgPool,
+    run_id: Uuid,
+    metrics: &serde_json::Map<String, serde_json::Value>,
+    artifacts: &[ArtifactEntry],
+) -> Result<()> {
+    if !metrics.is_empty() {
+        let payload = serde_json::Value::Object(metrics.clone());
+        sqlx::query(
+            r#"
+            INSERT INTO run_metrics (run_id, payload, updated_at)
+            VALUES ($1, $2, NOW())
+            ON CONFLICT (run_id)
+            DO UPDATE SET payload = EXCLUDED.payload, updated_at = NOW()
+            "#,
+        )
+        .bind(run_id)
+        .bind(payload)
+        .execute(pg)
+        .await?;
+    }
+
+    if !artifacts.is_empty() {
+        sqlx::query("DELETE FROM run_artifacts WHERE run_id = $1")
+            .bind(run_id)
+            .execute(pg)
+            .await?;
+
+        for a in artifacts {
+            sqlx::query(
+                r#"
+                INSERT INTO run_artifacts (run_id, kind, path, created_at)
+                VALUES ($1, $2, $3, NOW())
+                "#,
+            )
+            .bind(run_id)
+            .bind(&a.kind)
+            .bind(&a.path)
+            .execute(pg)
+            .await?;
         }
     }
 

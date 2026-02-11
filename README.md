@@ -75,6 +75,8 @@ Orchestration Foundation (API + Worker)
 - `GET /runs`
 - `GET /runs/:id`
 - `GET /runs/:id/events`
+- `GET /runs/:id/metrics`
+- `GET /runs/:id/artifacts`
 
 Пример `POST /runs`:
 ```json

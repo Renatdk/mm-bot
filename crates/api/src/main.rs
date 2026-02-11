@@ -48,6 +48,8 @@ async fn main() -> Result<()> {
         .route("/runs", post(create_run).get(list_runs))
         .route("/runs/{id}", get(get_run))
         .route("/runs/{id}/events", get(list_run_events))
+        .route("/runs/{id}/metrics", get(get_run_metrics))
+        .route("/runs/{id}/artifacts", get(get_run_artifacts))
         .with_state(state);
 
     let addr: SocketAddr = bind_addr.parse().context("invalid BIND_ADDR")?;
@@ -251,6 +253,53 @@ async fn list_run_events(
     Ok(Json(out))
 }
 
+async fn get_run_metrics(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let row = sqlx::query_as::<_, DbRunMetrics>(
+        r#"
+        SELECT run_id, payload, updated_at
+        FROM run_metrics
+        WHERE run_id = $1
+        "#,
+    )
+    .bind(id)
+    .fetch_optional(&state.pg)
+    .await
+    .map_err(internal_err)?;
+
+    let Some(row) = row else {
+        return Err((StatusCode::NOT_FOUND, Json(json!({"error": "metrics not found"}))));
+    };
+
+    Ok(Json(json!({
+        "run_id": row.run_id,
+        "updated_at": row.updated_at,
+        "payload": row.payload
+    })))
+}
+
+async fn get_run_artifacts(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let rows = sqlx::query_as::<_, DbRunArtifact>(
+        r#"
+        SELECT id, run_id, kind, path, created_at
+        FROM run_artifacts
+        WHERE run_id = $1
+        ORDER BY id ASC
+        "#,
+    )
+    .bind(id)
+    .fetch_all(&state.pg)
+    .await
+    .map_err(internal_err)?;
+
+    Ok(Json(rows))
+}
+
 #[derive(sqlx::FromRow)]
 struct DbRun {
     id: Uuid,
@@ -271,6 +320,22 @@ struct DbRunEvent {
     ts: chrono::DateTime<chrono::Utc>,
     level: String,
     message: String,
+}
+
+#[derive(sqlx::FromRow, serde::Serialize)]
+struct DbRunMetrics {
+    run_id: Uuid,
+    payload: serde_json::Value,
+    updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(sqlx::FromRow, serde::Serialize)]
+struct DbRunArtifact {
+    id: i64,
+    run_id: Uuid,
+    kind: String,
+    path: String,
+    created_at: chrono::DateTime<chrono::Utc>,
 }
 
 fn db_to_run_record(r: DbRun) -> Result<RunRecord> {
