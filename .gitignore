@@ -20,3 +20,4 @@
 
 # Backtest/cache artifacts
 data/backtest*.csv
+data/*.csv
