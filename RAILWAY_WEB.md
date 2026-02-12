@@ -13,6 +13,12 @@ Service name suggestion: `mm-bot-web`
 - `NEXT_PUBLIC_API_BASE_URL` = `https://<api-domain>.up.railway.app`
 - `PORT` is provided by Railway automatically
 
+Important:
+
+- `NEXT_PUBLIC_API_BASE_URL` is embedded during Next.js build.
+- Set variable first, then trigger a new deploy.
+- If you changed the variable after deploy, redeploy again.
+
 ## Post-deploy check
 
 Open:
