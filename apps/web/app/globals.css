@@ -85,6 +85,12 @@ a {
   gap: 10px;
 }
 
+.filter-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(130px, 220px));
+  gap: 10px;
+}
+
 label {
   display: grid;
   gap: 6px;
@@ -93,6 +99,14 @@ label {
 }
 
 input {
+  background: #0c1424;
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+select {
   background: #0c1424;
   color: var(--text);
   border: 1px solid var(--line);
@@ -215,8 +229,28 @@ th {
   background: #0a121f;
 }
 
+.legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  display: inline-block;
+  margin-left: 8px;
+}
+
+.legend-buy {
+  background: #3b82f6;
+}
+
+.legend-sell {
+  background: #f97316;
+}
+
 @media (max-width: 900px) {
   .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .filter-grid {
     grid-template-columns: 1fr;
   }
 

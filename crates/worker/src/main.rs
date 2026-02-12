@@ -1,4 +1,4 @@
-use std::{env, process::Stdio};
+use std::{env, path::PathBuf, process::Stdio};
 
 use anyhow::{Context, Result};
 use orchestrator_core::models::{RUN_QUEUE_KEY, RunKind};
@@ -152,7 +152,7 @@ async fn process_run(pg: &PgPool, run_id: Uuid, workspace_root: &str, engine_bin
                 }
 
                 if status.success() {
-                    persist_results(pg, run_id, &metrics, &artifacts).await?;
+                    persist_results(pg, run_id, workspace_root, &metrics, &artifacts).await?;
                     sqlx::query(
                         r#"
                         UPDATE runs
@@ -180,6 +180,22 @@ async fn process_run(pg: &PgPool, run_id: Uuid, workspace_root: &str, engine_bin
 struct ArtifactEntry {
     kind: String,
     path: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct EquityPoint {
+    ts: i64,
+    equity: f64,
+    close: Option<f64>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct TradePoint {
+    ts: i64,
+    side: String,
+    price: f64,
+    qty: Option<f64>,
+    pnl: Option<f64>,
 }
 
 fn collect_results_from_line(
@@ -224,11 +240,15 @@ fn collect_results_from_line(
 async fn persist_results(
     pg: &PgPool,
     run_id: Uuid,
+    workspace_root: &str,
     metrics: &serde_json::Map<String, serde_json::Value>,
     artifacts: &[ArtifactEntry],
 ) -> Result<()> {
-    if !metrics.is_empty() {
-        let payload = serde_json::Value::Object(metrics.clone());
+    let mut payload_map = metrics.clone();
+    append_chart_snapshots(workspace_root, artifacts, &mut payload_map);
+
+    if !payload_map.is_empty() {
+        let payload = serde_json::Value::Object(payload_map);
         sqlx::query(
             r#"
             INSERT INTO run_metrics (run_id, payload, updated_at)
@@ -265,6 +285,140 @@ async fn persist_results(
     }
 
     Ok(())
+}
+
+fn append_chart_snapshots(
+    workspace_root: &str,
+    artifacts: &[ArtifactEntry],
+    payload: &mut serde_json::Map<String, serde_json::Value>,
+) {
+    let equity_artifact = artifacts.iter().find(|a| a.kind.contains("equity"));
+    if let Some(a) = equity_artifact {
+        let path = resolve_artifact_path(workspace_root, &a.path);
+        if let Ok(points) = read_equity_points(&path, 800) {
+            payload.insert("chart_equity".to_string(), serde_json::json!(points));
+        }
+    }
+
+    let trade_artifact = artifacts
+        .iter()
+        .find(|a| a.kind.contains("fills") || a.kind.contains("trades"));
+    if let Some(a) = trade_artifact {
+        let path = resolve_artifact_path(workspace_root, &a.path);
+        if let Ok(points) = read_trade_points(&path, 1200) {
+            payload.insert("chart_trades".to_string(), serde_json::json!(points));
+        }
+    }
+}
+
+fn resolve_artifact_path(workspace_root: &str, raw: &str) -> PathBuf {
+    let p = PathBuf::from(raw);
+    if p.is_absolute() {
+        p
+    } else {
+        PathBuf::from(workspace_root).join(p)
+    }
+}
+
+fn find_header_idx(headers: &csv::StringRecord, names: &[&str]) -> Option<usize> {
+    headers
+        .iter()
+        .position(|h| names.iter().any(|n| h.eq_ignore_ascii_case(n)))
+}
+
+fn parse_f64_cell(rec: &csv::StringRecord, idx: Option<usize>) -> Option<f64> {
+    let i = idx?;
+    rec.get(i)?.trim().parse::<f64>().ok()
+}
+
+fn parse_i64_cell(rec: &csv::StringRecord, idx: Option<usize>) -> Option<i64> {
+    let i = idx?;
+    rec.get(i)?.trim().parse::<i64>().ok()
+}
+
+fn sample_evenly<T: Clone>(points: &[T], max_points: usize) -> Vec<T> {
+    if points.len() <= max_points {
+        return points.to_vec();
+    }
+    if max_points < 2 {
+        return vec![points[points.len() - 1].clone()];
+    }
+
+    let span = points.len() - 1;
+    let mut out = Vec::with_capacity(max_points);
+    for i in 0..max_points {
+        let idx = i * span / (max_points - 1);
+        out.push(points[idx].clone());
+    }
+    out
+}
+
+fn read_equity_points(path: &PathBuf, max_points: usize) -> Result<Vec<EquityPoint>> {
+    let mut rdr = csv::Reader::from_path(path)?;
+    let headers = rdr.headers()?.clone();
+    let ts_idx = find_header_idx(&headers, &["ts", "timestamp"]);
+    let equity_idx = find_header_idx(&headers, &["equity", "final_equity"]);
+    let close_idx = find_header_idx(&headers, &["close", "price"]);
+
+    if ts_idx.is_none() || equity_idx.is_none() {
+        anyhow::bail!("equity csv missing required columns");
+    }
+
+    let mut points = Vec::new();
+    for rec in rdr.records() {
+        let rec = rec?;
+        let Some(ts) = parse_i64_cell(&rec, ts_idx) else {
+            continue;
+        };
+        let Some(equity) = parse_f64_cell(&rec, equity_idx) else {
+            continue;
+        };
+        let close = parse_f64_cell(&rec, close_idx);
+        points.push(EquityPoint { ts, equity, close });
+    }
+    Ok(sample_evenly(&points, max_points))
+}
+
+fn read_trade_points(path: &PathBuf, max_points: usize) -> Result<Vec<TradePoint>> {
+    let mut rdr = csv::Reader::from_path(path)?;
+    let headers = rdr.headers()?.clone();
+    let ts_idx = find_header_idx(&headers, &["ts", "timestamp"]);
+    let side_idx = find_header_idx(&headers, &["side"]);
+    let price_idx = find_header_idx(&headers, &["price", "fill_price", "mid_price"]);
+    let qty_idx = find_header_idx(&headers, &["qty", "quantity"]);
+    let pnl_idx = find_header_idx(&headers, &["realized_pnl", "trade_pnl", "pnl"]);
+
+    if ts_idx.is_none() || side_idx.is_none() || price_idx.is_none() {
+        anyhow::bail!("trade csv missing required columns");
+    }
+    let Some(side_idx) = side_idx else {
+        anyhow::bail!("trade csv missing side column");
+    };
+
+    let mut points = Vec::new();
+    for rec in rdr.records() {
+        let rec = rec?;
+        let Some(ts) = parse_i64_cell(&rec, ts_idx) else {
+            continue;
+        };
+        let Some(price) = parse_f64_cell(&rec, price_idx) else {
+            continue;
+        };
+        let side = rec.get(side_idx).unwrap_or("").trim().to_uppercase();
+        if side.is_empty() {
+            continue;
+        }
+        let qty = parse_f64_cell(&rec, qty_idx);
+        let pnl = parse_f64_cell(&rec, pnl_idx);
+        points.push(TradePoint {
+            ts,
+            side,
+            price,
+            qty,
+            pnl,
+        });
+    }
+    Ok(sample_evenly(&points, max_points))
 }
 
 async fn append_event(pg: &PgPool, run_id: Uuid, level: &str, message: &str) -> Result<()> {

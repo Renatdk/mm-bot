@@ -3,8 +3,16 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { getRun, getRunArtifacts, getRunEvents, getRunMetrics } from '@/lib/api';
-import type { RunArtifact, RunEventRecord, RunMetricsResponse, RunRecord } from '@/lib/types';
+import type {
+  EquityPoint,
+  RunArtifact,
+  RunEventRecord,
+  RunMetricsResponse,
+  RunRecord,
+  TradePoint
+} from '@/lib/types';
 import { LineChart } from '@/components/LineChart';
+import { TradeOverlayChart } from '@/components/TradeOverlayChart';
 
 function toNumber(v: unknown): number | null {
   if (typeof v === 'number' && Number.isFinite(v)) return v;
@@ -18,6 +26,38 @@ function toNumber(v: unknown): number | null {
 function extractMetric(metrics: RunMetricsResponse | null, key: string): number | null {
   if (!metrics) return null;
   return toNumber(metrics.payload[key]);
+}
+
+function parseEquityPoints(metrics: RunMetricsResponse | null): EquityPoint[] {
+  const raw = metrics?.payload?.chart_equity;
+  if (!Array.isArray(raw)) return [];
+  const out: EquityPoint[] = [];
+  for (const item of raw) {
+    if (typeof item !== 'object' || item === null) continue;
+    const ts = toNumber((item as { ts?: unknown }).ts);
+    const equity = toNumber((item as { equity?: unknown }).equity);
+    const close = toNumber((item as { close?: unknown }).close);
+    if (ts === null || equity === null) continue;
+    out.push({ ts, equity, close });
+  }
+  return out.sort((a, b) => a.ts - b.ts);
+}
+
+function parseTradePoints(metrics: RunMetricsResponse | null): TradePoint[] {
+  const raw = metrics?.payload?.chart_trades;
+  if (!Array.isArray(raw)) return [];
+  const out: TradePoint[] = [];
+  for (const item of raw) {
+    if (typeof item !== 'object' || item === null) continue;
+    const ts = toNumber((item as { ts?: unknown }).ts);
+    const price = toNumber((item as { price?: unknown }).price);
+    const side = (item as { side?: unknown }).side;
+    const qty = toNumber((item as { qty?: unknown }).qty);
+    const pnl = toNumber((item as { pnl?: unknown }).pnl);
+    if (ts === null || price === null || typeof side !== 'string') continue;
+    out.push({ ts, side, price, qty, pnl });
+  }
+  return out.sort((a, b) => a.ts - b.ts);
 }
 
 export default function RunDetailsPage({ params }: { params: { id: string } }) {
@@ -64,6 +104,8 @@ export default function RunDetailsPage({ params }: { params: { id: string } }) {
     () => events.map((e) => ({ x: new Date(e.ts).getTime(), y: e.id })),
     [events]
   );
+  const equityChart = useMemo(() => parseEquityPoints(metrics), [metrics]);
+  const tradePoints = useMemo(() => parseTradePoints(metrics), [metrics]);
 
   return (
     <section className="stack">
@@ -111,6 +153,11 @@ export default function RunDetailsPage({ params }: { params: { id: string } }) {
       <div className="card stack">
         <h2>Trading Result (live ROI track)</h2>
         <LineChart points={timeline} yLabel="ROI %" color="#17c964" />
+      </div>
+
+      <div className="card stack">
+        <h2>Equity + Trades</h2>
+        <TradeOverlayChart equity={equityChart} trades={tradePoints} />
       </div>
 
       <div className="card stack">

@@ -8,6 +8,8 @@ anyhow = "1"
 orchestrator-core = { path = "../orchestrator-core" }
 redis = { version = "0.27", features = ["tokio-comp"] }
 serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+csv = "1"
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid", "json"] }
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"

@@ -18,6 +18,9 @@ export default function RunsPage() {
   const [symbol, setSymbol] = useState('ETHUSDT');
   const [start, setStart] = useState('2026-01-01');
   const [end, setEnd] = useState('2026-02-10');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [kindFilter, setKindFilter] = useState('all');
+  const [query, setQuery] = useState('');
 
   async function refresh() {
     try {
@@ -54,6 +57,26 @@ export default function RunsPage() {
     [runs]
   );
 
+  const knownKinds = useMemo(() => {
+    const set = new Set<string>();
+    for (const r of runs) set.add(r.kind);
+    return Array.from(set).sort();
+  }, [runs]);
+
+  const filteredRuns = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return runs.filter((r) => {
+      if (statusFilter !== 'all' && r.status !== statusFilter) return false;
+      if (kindFilter !== 'all' && r.kind !== kindFilter) return false;
+      if (!q) return true;
+      return (
+        r.name.toLowerCase().includes(q) ||
+        r.id.toLowerCase().includes(q) ||
+        r.kind.toLowerCase().includes(q)
+      );
+    });
+  }, [runs, statusFilter, kindFilter, query]);
+
   return (
     <section className="stack">
       <div className="card stack">
@@ -85,6 +108,38 @@ export default function RunsPage() {
           <span className="muted tiny">Active: {activeCount}</span>
         </div>
 
+        <div className="filter-grid">
+          <label>
+            Status
+            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+              <option value="all">all</option>
+              <option value="queued">queued</option>
+              <option value="running">running</option>
+              <option value="completed">completed</option>
+              <option value="failed">failed</option>
+            </select>
+          </label>
+          <label>
+            Kind
+            <select value={kindFilter} onChange={(e) => setKindFilter(e.target.value)}>
+              <option value="all">all</option>
+              {knownKinds.map((k) => (
+                <option key={k} value={k}>
+                  {k}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Search
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="name / id / kind"
+            />
+          </label>
+        </div>
+
         {error ? <p className="error">{error}</p> : null}
       </div>
 
@@ -101,7 +156,7 @@ export default function RunsPage() {
             </tr>
           </thead>
           <tbody>
-            {runs.map((run) => (
+            {filteredRuns.map((run) => (
               <tr key={run.id}>
                 <td className="tiny">{new Date(run.created_at).toLocaleString()}</td>
                 <td>{run.name}</td>
@@ -114,6 +169,13 @@ export default function RunsPage() {
                 </td>
               </tr>
             ))}
+            {!filteredRuns.length ? (
+              <tr>
+                <td colSpan={5} className="muted tiny">
+                  No runs match the current filters
+                </td>
+              </tr>
+            ) : null}
           </tbody>
         </table>
       </div>

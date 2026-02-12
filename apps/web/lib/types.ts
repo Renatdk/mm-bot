@@ -26,6 +26,20 @@ export interface RunMetricsResponse {
   payload: Record<string, unknown>;
 }
 
+export interface EquityPoint {
+  ts: number;
+  equity: number;
+  close?: number | null;
+}
+
+export interface TradePoint {
+  ts: number;
+  side: string;
+  price: number;
+  qty?: number | null;
+  pnl?: number | null;
+}
+
 export interface RunArtifact {
   id: number;
   run_id: string;
