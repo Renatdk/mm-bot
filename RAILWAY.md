@@ -18,6 +18,7 @@ Environment variables:
 - `DATABASE_URL` = connection string вашей Railway PostgreSQL
 - `REDIS_URL` = connection string вашей Railway Redis
 - `BIND_ADDR` = `0.0.0.0:$PORT`
+- `CORS_ALLOW_ORIGINS` = `http://localhost:3000,https://<your-web-domain>.up.railway.app`
 - `RUST_LOG` = `api=info`
 
 ## 2) Worker service (Docker)

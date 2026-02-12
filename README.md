@@ -76,6 +76,7 @@ Web UI (Next.js):
   - `cd apps/web`
   - `npm install`
   - `npm run dev`
+- деплой на Railway: `Dockerfile.web` (см. `RAILWAY_WEB.md`)
 
 Базовые endpoints API:
 - `GET /health`

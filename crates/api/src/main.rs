@@ -15,6 +15,7 @@ use redis::AsyncCommands;
 use serde::Deserialize;
 use serde_json::json;
 use sqlx::PgPool;
+use tower_http::cors::{Any, CorsLayer};
 use tracing::{error, info};
 use uuid::Uuid;
 
@@ -40,6 +41,7 @@ async fn main() -> Result<()> {
     let pg = PgPool::connect(&database_url).await?;
     sqlx::migrate!("../../migrations").run(&pg).await?;
     let redis = redis::Client::open(redis_url)?;
+    let cors = build_cors_from_env();
 
     let state = AppState { pg, redis };
 
@@ -51,6 +53,7 @@ async fn main() -> Result<()> {
         .route("/runs/{id}/events", get(list_run_events))
         .route("/runs/{id}/metrics", get(get_run_metrics))
         .route("/runs/{id}/artifacts", get(get_run_artifacts))
+        .layer(cors)
         .with_state(state);
 
     let addr: SocketAddr = bind_addr.parse().context("invalid BIND_ADDR")?;
@@ -58,6 +61,31 @@ async fn main() -> Result<()> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+fn build_cors_from_env() -> CorsLayer {
+    let allow = env::var("CORS_ALLOW_ORIGINS").unwrap_or_else(|_| {
+        "http://localhost:3000,http://127.0.0.1:3000".to_string()
+    });
+
+    let origins: Vec<axum::http::HeaderValue> = allow
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .filter_map(|s| s.parse().ok())
+        .collect();
+
+    if origins.is_empty() {
+        CorsLayer::new()
+            .allow_methods(Any)
+            .allow_headers(Any)
+            .allow_origin(Any)
+    } else {
+        CorsLayer::new()
+            .allow_methods(Any)
+            .allow_headers(Any)
+            .allow_origin(origins)
+    }
 }
 
 fn resolve_bind_addr() -> Result<String> {
