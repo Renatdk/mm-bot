@@ -101,7 +101,10 @@ export default function RunDetailsPage({ params }: { params: { id: string } }) {
   }, [runId]);
 
   const progressChart = useMemo(
-    () => events.map((e) => ({ x: new Date(e.ts).getTime(), y: e.id })),
+    () =>
+      [...events]
+        .sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime())
+        .map((e, idx) => ({ x: new Date(e.ts).getTime(), y: idx + 1 })),
     [events]
   );
   const equityChart = useMemo(() => parseEquityPoints(metrics), [metrics]);
