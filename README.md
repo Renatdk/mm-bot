@@ -69,6 +69,14 @@ Orchestration Foundation (API + Worker)
 Деплой на Railway:
 см. `RAILWAY.md`.
 
+Web UI (Next.js):
+- путь: `apps/web`
+- env: `NEXT_PUBLIC_API_BASE_URL`
+- запуск:
+  - `cd apps/web`
+  - `npm install`
+  - `npm run dev`
+
 Базовые endpoints API:
 - `GET /health`
 - `POST /runs`

@@ -22,3 +22,8 @@
 # Backtest/cache artifacts
 data/backtest*.csv
 data/*.csv
+
+# Web UI
+apps/web/node_modules/
+apps/web/.next/
+apps/web/.env.local
