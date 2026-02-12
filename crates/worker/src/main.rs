@@ -1,4 +1,9 @@
-use std::{env, path::PathBuf, process::Stdio};
+use std::{
+    env,
+    path::PathBuf,
+    process::Stdio,
+    time::{Duration, Instant},
+};
 
 use anyhow::{Context, Result};
 use orchestrator_core::models::{RUN_QUEUE_KEY, RunKind};
@@ -109,6 +114,7 @@ async fn process_run(pg: &PgPool, run_id: Uuid, workspace_root: &str, engine_bin
     let mut err_reader = BufReader::new(stderr).lines();
     let mut metrics = serde_json::Map::<String, serde_json::Value>::new();
     let mut artifacts: Vec<ArtifactEntry> = Vec::new();
+    let mut last_progress_persist = Instant::now();
 
     loop {
         tokio::select! {
@@ -117,6 +123,14 @@ async fn process_run(pg: &PgPool, run_id: Uuid, workspace_root: &str, engine_bin
                     Ok(Some(line)) => {
                         collect_results_from_line(&line, &mut metrics, &mut artifacts);
                         append_event(pg, run_id, "info", &line).await?;
+                        persist_progress_if_due(
+                            pg,
+                            run_id,
+                            workspace_root,
+                            &metrics,
+                            &artifacts,
+                            &mut last_progress_persist
+                        ).await?;
                     }
                     Ok(None) => {}
                     Err(e) => {
@@ -129,6 +143,14 @@ async fn process_run(pg: &PgPool, run_id: Uuid, workspace_root: &str, engine_bin
                     Ok(Some(line)) => {
                         collect_results_from_line(&line, &mut metrics, &mut artifacts);
                         append_event(pg, run_id, "error", &line).await?;
+                        persist_progress_if_due(
+                            pg,
+                            run_id,
+                            workspace_root,
+                            &metrics,
+                            &artifacts,
+                            &mut last_progress_persist
+                        ).await?;
                     }
                     Ok(None) => {}
                     Err(e) => {
@@ -173,6 +195,25 @@ async fn process_run(pg: &PgPool, run_id: Uuid, workspace_root: &str, engine_bin
         }
     }
 
+    Ok(())
+}
+
+const LIVE_PERSIST_INTERVAL: Duration = Duration::from_secs(2);
+
+async fn persist_progress_if_due(
+    pg: &PgPool,
+    run_id: Uuid,
+    workspace_root: &str,
+    metrics: &serde_json::Map<String, serde_json::Value>,
+    artifacts: &[ArtifactEntry],
+    last_persist: &mut Instant,
+) -> Result<()> {
+    if last_persist.elapsed() < LIVE_PERSIST_INTERVAL {
+        return Ok(());
+    }
+
+    persist_results(pg, run_id, workspace_root, metrics, artifacts).await?;
+    *last_persist = Instant::now();
     Ok(())
 }
 

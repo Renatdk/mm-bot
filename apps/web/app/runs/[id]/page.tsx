@@ -11,6 +11,7 @@ import type {
   RunRecord,
   TradePoint
 } from '@/lib/types';
+import { CandlestickChart, type Candle } from '@/components/CandlestickChart';
 import { LineChart } from '@/components/LineChart';
 import { TradeOverlayChart } from '@/components/TradeOverlayChart';
 
@@ -21,6 +22,10 @@ function toNumber(v: unknown): number | null {
     if (Number.isFinite(n)) return n;
   }
   return null;
+}
+
+function normalizeTs(ts: number): number {
+  return ts < 10_000_000_000 ? ts * 1000 : ts;
 }
 
 function extractMetric(metrics: RunMetricsResponse | null, key: string): number | null {
@@ -38,7 +43,7 @@ function parseEquityPoints(metrics: RunMetricsResponse | null): EquityPoint[] {
     const equity = toNumber((item as { equity?: unknown }).equity);
     const close = toNumber((item as { close?: unknown }).close);
     if (ts === null || equity === null) continue;
-    out.push({ ts, equity, close });
+    out.push({ ts: normalizeTs(ts), equity, close });
   }
   return out.sort((a, b) => a.ts - b.ts);
 }
@@ -55,9 +60,38 @@ function parseTradePoints(metrics: RunMetricsResponse | null): TradePoint[] {
     const qty = toNumber((item as { qty?: unknown }).qty);
     const pnl = toNumber((item as { pnl?: unknown }).pnl);
     if (ts === null || price === null || typeof side !== 'string') continue;
-    out.push({ ts, side, price, qty, pnl });
+    out.push({ ts: normalizeTs(ts), side, price, qty, pnl });
   }
   return out.sort((a, b) => a.ts - b.ts);
+}
+
+function buildCandles(points: EquityPoint[]): Candle[] {
+  if (!points.length) return [];
+
+  const minTs = points[0].ts;
+  const maxTs = points[points.length - 1].ts;
+  const span = Math.max(1, maxTs - minTs);
+
+  let bucketMs = 60_000;
+  if (span > 2 * 24 * 60 * 60 * 1000) bucketMs = 30 * 60_000;
+  else if (span > 12 * 60 * 60 * 1000) bucketMs = 5 * 60_000;
+
+  const byBucket = new Map<number, Candle>();
+  for (const p of points) {
+    const price = p.close ?? p.equity;
+    if (!Number.isFinite(price)) continue;
+    const ts = Math.floor(p.ts / bucketMs) * bucketMs;
+    const prev = byBucket.get(ts);
+    if (!prev) {
+      byBucket.set(ts, { ts, open: price, high: price, low: price, close: price });
+      continue;
+    }
+    prev.high = Math.max(prev.high, price);
+    prev.low = Math.min(prev.low, price);
+    prev.close = price;
+  }
+
+  return Array.from(byBucket.values()).sort((a, b) => a.ts - b.ts);
 }
 
 export default function RunDetailsPage({ params }: { params: { id: string } }) {
@@ -69,6 +103,7 @@ export default function RunDetailsPage({ params }: { params: { id: string } }) {
   const [artifacts, setArtifacts] = useState<RunArtifact[]>([]);
   const [error, setError] = useState<string>('');
   const [timeline, setTimeline] = useState<Array<{ x: number; y: number }>>([]);
+  const isActive = run?.status === 'queued' || run?.status === 'running';
 
   async function refresh() {
     try {
@@ -96,9 +131,9 @@ export default function RunDetailsPage({ params }: { params: { id: string } }) {
 
   useEffect(() => {
     refresh();
-    const t = setInterval(refresh, 3000);
+    const t = setInterval(refresh, isActive ? 1000 : 4000);
     return () => clearInterval(t);
-  }, [runId]);
+  }, [runId, isActive]);
 
   const progressChart = useMemo(
     () =>
@@ -109,6 +144,7 @@ export default function RunDetailsPage({ params }: { params: { id: string } }) {
   );
   const equityChart = useMemo(() => parseEquityPoints(metrics), [metrics]);
   const tradePoints = useMemo(() => parseTradePoints(metrics), [metrics]);
+  const candles = useMemo(() => buildCandles(equityChart), [equityChart]);
 
   return (
     <section className="stack">
@@ -128,6 +164,10 @@ export default function RunDetailsPage({ params }: { params: { id: string } }) {
           <div>
             <div className="label">Status</div>
             <div>{run?.status || '-'}</div>
+          </div>
+          <div>
+            <div className="label">Live Updates</div>
+            <div>{isActive ? 'on (1s)' : 'idle (4s)'}</div>
           </div>
           <div>
             <div className="label">Kind</div>
@@ -156,6 +196,11 @@ export default function RunDetailsPage({ params }: { params: { id: string } }) {
       <div className="card stack">
         <h2>Trading Result (live ROI track)</h2>
         <LineChart points={timeline} yLabel="ROI %" color="#17c964" />
+      </div>
+
+      <div className="card stack">
+        <h2>Price Candles (live)</h2>
+        <CandlestickChart candles={candles} trades={tradePoints} />
       </div>
 
       <div className="card stack">

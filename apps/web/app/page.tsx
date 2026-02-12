@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { createMmMtfSweepPreset, listRuns } from '@/lib/api';
 import type { RunRecord } from '@/lib/types';
 
@@ -10,6 +11,7 @@ function statusClass(status: string): string {
 }
 
 export default function RunsPage() {
+  const router = useRouter();
   const [runs, setRuns] = useState<RunRecord[]>([]);
   const [error, setError] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(true);
@@ -43,8 +45,9 @@ export default function RunsPage() {
   async function onCreatePreset() {
     setSubmitting(true);
     try {
-      await createMmMtfSweepPreset({ symbol, start, end, maker_fee_bps_list: '10' });
+      const run = await createMmMtfSweepPreset({ symbol, start, end, maker_fee_bps_list: '10' });
       await refresh();
+      router.push(`/runs/${run.id}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
