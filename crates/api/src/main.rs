@@ -405,15 +405,20 @@ async fn get_run_metrics(
     .await
     .map_err(internal_err)?;
 
-    let Some(row) = row else {
-        return Err((StatusCode::NOT_FOUND, Json(json!({"error": "metrics not found"}))));
+    let out = match row {
+        Some(row) => json!({
+            "run_id": row.run_id,
+            "updated_at": row.updated_at,
+            "payload": row.payload
+        }),
+        None => json!({
+            "run_id": id,
+            "updated_at": serde_json::Value::Null,
+            "payload": serde_json::json!({})
+        }),
     };
 
-    Ok(Json(json!({
-        "run_id": row.run_id,
-        "updated_at": row.updated_at,
-        "payload": row.payload
-    })))
+    Ok(Json(out))
 }
 
 async fn get_run_artifacts(

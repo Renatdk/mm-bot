@@ -22,7 +22,7 @@ export interface RunEventRecord {
 
 export interface RunMetricsResponse {
   run_id: string;
-  updated_at: string;
+  updated_at: string | null;
   payload: Record<string, unknown>;
 }
 
